@@ -1,0 +1,8 @@
+import * as Sentry from '@sentry/nextjs'
+
+Sentry.init({
+  dsn: process.env.NEXT_PUBLIC_EXAMPLES_SENTRY_DSN,
+  environment: process.env.NODE_ENV,
+  tracesSampleRate: 0.1,
+  initialScope: { tags: { example_stack: 'nextjs' } },
+})
