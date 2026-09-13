@@ -41,6 +41,50 @@ function verifyWithKey(payload: string, signature: string, enclaveKey: string): 
     );
 }
 
+// ── Enclave doğrulama (opsiyonel, Partner_Integration_Guide_TR.md Bölüm 7) ──────────────
+// SDK, doğrulama sonucuyla birlikte `attestation.pcr0_signature` ve `attestation.attestation_document`
+// verir (onSuccess verisinde). Aşağıdaki kontrol, konuştuğunuz enclave'in halka açık kaynaktan
+// yeniden üretilebilir şekilde derlenmiş sürüm olduğunu VerifyBlind'a güvenmeden teyit eder.
+//
+// Bu örnek portal akışı bloke ETMEZ — istemci şu an rotaya yalnız payload+signature gönderiyor.
+// Kendi entegrasyonunuzda kanıtı da backend'e taşıyıp bu kontrolü ZORUNLU yapabilirsiniz.
+
+let cachedDeveloperKey: string | null = null;
+let developerKeyCachedAt = 0;
+
+async function getDeveloperKey(): Promise<string> {
+    // Rotasyona kadar sabit; yine de bir saatlik tazeleme bırakıyoruz.
+    if (cachedDeveloperKey && Date.now() - developerKeyCachedAt < 3_600_000) return cachedDeveloperKey;
+    const res = await fetch('https://api.verifyblind.com/api/public/developer-key', { cache: 'no-store' });
+    if (!res.ok) throw new Error('Geliştirici public key alınamadı');
+    const json = await res.json();
+    cachedDeveloperKey = json.public_key as string;
+    developerKeyCachedAt = Date.now();
+    return cachedDeveloperKey;
+}
+
+/**
+ * PCR0 yetkilendirme imzasını doğrular.
+ *
+ * DİKKAT: padding burada PKCS#1 v1.5'tir — enclave'in SONUÇ imzası ise PSS
+ * (bkz. verifyWithKey). Karıştırmak sessizce false döndürür.
+ *
+ * İkinci adım: pcr0Hex'i Enclave repo'sunun son release'indeki expected_pcr.json ile
+ * karşılaştırın (https://github.com/VerifyBlind/VerifyBlind-Enclave/releases/latest).
+ */
+export async function verifyPcr0Signature(pcr0Hex: string, pcr0SignatureB64: string): Promise<boolean> {
+    try {
+        return crypto.verify(
+            'sha256',
+            Buffer.from(pcr0Hex, 'utf8'),
+            { key: await getDeveloperKey(), padding: crypto.constants.RSA_PKCS1_PADDING },
+            Buffer.from(pcr0SignatureB64, 'base64')
+        );
+    } catch {
+        return false;
+    }
+}
+
 /**
  * POST /api/verify
  * token (base64) parse eder → Enclave imzasını RSA-PSS SHA-256 ile doğrular.
