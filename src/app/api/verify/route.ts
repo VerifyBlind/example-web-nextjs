@@ -85,6 +85,38 @@ export async function verifyPcr0Signature(pcr0Hex: string, pcr0SignatureB64: str
     }
 }
 
+type AskedValidations = { age?: string; user_id?: true };
+
+function parseAsked(stored: string): AskedValidations {
+    try {
+        const v = JSON.parse(stored);
+        return v && typeof v === 'object' ? v : {};
+    } catch {
+        return {};
+    }
+}
+
+/**
+ * Checks the signed validations against the validations stored with the nonce at generate.
+ * Returns an error message, or null when the result matches what was asked.
+ *
+ * `validations.age` is the enclave's answer to the condition it was asked. Newer enclave releases
+ * also sign that condition as `validations.age_condition`; when present it must equal the stored
+ * condition. When absent (older enclave), the stored condition is what `age` refers to — which is
+ * only safe because generate set validations on the server.
+ */
+function checkAgainstAsked(asked: AskedValidations, validations: Record<string, unknown> | undefined): string | null {
+    const v = validations ?? {};
+    if (asked.age === undefined) {
+        if (v.age !== undefined) return 'Yaş sorulmadığı halde yaş sonucu geldi';
+        return null;
+    }
+    if (v.age_condition !== undefined && v.age_condition !== asked.age) {
+        return `Sorulan yaş koşulu eşleşmiyor (beklenen ${asked.age}, gelen ${String(v.age_condition)})`;
+    }
+    return null;
+}
+
 /**
  * POST /api/verify
  * token (base64) parse eder → Enclave imzasını RSA-PSS SHA-256 ile doğrular.
@@ -130,8 +162,17 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Oturum süresi dolmuş veya zaten kullanılmış' }, { status: 401 });
         }
 
+        // Read the result against what WE asked at generate (stored with the nonce), never against
+        // what the browser says it asked.
+        const asked = parseAsked(consumed);
+        const mismatch = checkAgainstAsked(asked, data?.validations);
+        if (mismatch) {
+            console.warn(`[TestPortal Verify] ❌ ${mismatch}`);
+            return NextResponse.json({ error: mismatch }, { status: 401 });
+        }
+
         console.log(`[TestPortal Verify] ✅ İmza doğrulandı, user_id: ${data?.validations?.user_id}`);
-        return NextResponse.json({ success: true, data });
+        return NextResponse.json({ success: true, data, asked });
 
     } catch (error: any) {
         Sentry.captureException(error);

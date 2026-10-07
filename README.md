@@ -13,12 +13,17 @@ ise **sunucu-decrypt (callback/webhook)** varyantını gösterir.
 ### Akış
 1. **Sunucu-taraflı proxy** — Tarayıcı `POST /api/generate` çağırır; sunucu `X-API-Key`'i ekleyip
    VerifyBlind `POST /api/pop/generate`'e iletir ve bir `nonce` döner. **API anahtarı tarayıcıya hiç
-   gösterilmez.** (`src/app/api/generate/route.ts`)
+   gösterilmez.** Tarayıcıdan `public_key`, `cf_token`, `sdk_version` (ve `additional_data`) aynen
+   alınır; **ne sorulacağına (`validations`) sunucu karar verir** — tarayıcıdaki istek değiştirilebilir,
+   `"18+"` yerine `"1+"` soran biri de imzalı `age: true` alır. Bu demo ziyaretçinin seçimini yalnız bir
+   izin listesinden (`18+`, `user_id`) kabul eder; gerçek bir site `validations`'ı kendi ayarından koyar.
+   Sorulan koşul nonce ile birlikte saklanır. (`src/app/api/generate/route.ts`)
 2. **Doğrulama** — Kullanıcı QR'ı VerifyBlind mobil ile okutur (`src/app/send2mobile/`); doğrulama
    bitince partner'a imzalı bir token döner.
 3. **İmza kontrolü** — `POST /api/verify` token'ı alır, `GET /api/public/enclave-key` ile enclave'in
-   public key'ini çekip **RSA-PSS imzasını** doğrular ve nonce'u tek-kullanımlık tüketir.
-   (`src/app/api/verify/route.ts`)
+   public key'ini çekip **RSA-PSS imzasını** doğrular, nonce'u tek-kullanımlık tüketir ve sonucu
+   **nonce ile saklanan koşula göre** okur: imzalı `validations.age_condition` varsa (yeni enclave
+   sürümleri) sorulan koşula eşit olmalıdır. (`src/app/api/verify/route.ts`)
 
 ### Çalıştırma
 ```bash
@@ -44,11 +49,18 @@ the **same (browser-decrypt / PoP) flow** as `example-web-php`; `example-web-dot
 ### Flow
 1. **Server-side proxy** — The browser calls `POST /api/generate`; the server adds the `X-API-Key` and
    forwards it to VerifyBlind `POST /api/pop/generate`, returning a `nonce`. **The API key is never
-   exposed to the browser.** (`src/app/api/generate/route.ts`)
+   exposed to the browser.** `public_key`, `cf_token`, `sdk_version` (and `additional_data`) are taken
+   from the browser unchanged; **the server decides what is asked (`validations`)** — the browser
+   request can be edited, and someone who asks `"1+"` instead of `"18+"` also gets a signed `age: true`.
+   This demo accepts the visitor's choice only from an allow-list (`18+`, `user_id`); a real site sets
+   `validations` from its own configuration. The asked condition is stored with the nonce.
+   (`src/app/api/generate/route.ts`)
 2. **Verification** — The user scans the QR with VerifyBlind mobile (`src/app/send2mobile/`); on success
    a signed token is returned to the partner.
 3. **Signature check** — `POST /api/verify` takes the token, fetches the enclave public key via
-   `GET /api/public/enclave-key`, verifies the **RSA-PSS signature**, and consumes the nonce once.
+   `GET /api/public/enclave-key`, verifies the **RSA-PSS signature**, consumes the nonce once, and reads
+   the result **against the condition stored with the nonce**: if the signed
+   `validations.age_condition` is present (newer enclave releases) it must equal the asked condition.
    (`src/app/api/verify/route.ts`)
 
 ### Running
