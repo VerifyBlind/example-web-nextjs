@@ -63,3 +63,9 @@ npm run dev          # http://localhost:3000
 > The demo nonce store is single-instance only; use Redis/DB in production (`src/lib/redis.ts`).
 
 🌐 [verifyblind.com](https://verifyblind.com) · 🧩 [PHP example](https://github.com/VerifyBlind/example-web-php) · 🧩 [.NET example](https://github.com/VerifyBlind/example-web-dotnet)
+
+---
+
+## Lisans · License
+
+Apache License 2.0 — bkz. / see [LICENSE](LICENSE).
