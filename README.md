@@ -23,8 +23,8 @@ ise **sunucu-decrypt (callback/webhook)** varyantını gösterir.
    bitince partner'a imzalı bir token döner.
 3. **İmza kontrolü** — `POST /api/verify` token'ı alır, `GET /api/public/enclave-key` ile enclave'in
    public key'ini çekip **RSA-PSS imzasını** doğrular, nonce'u tek-kullanımlık tüketir ve sonucu
-   **nonce ile saklanan koşula göre** okur: imzalı `validations.age_condition` varsa (yeni enclave
-   sürümleri) sorulan koşula eşit olmalıdır. (`src/app/api/verify/route.ts`)
+   **nonce ile saklanan koşula göre** okur: imzalı `validations.age_condition` zorunludur ve sorulan
+   koşula eşit olmalıdır; yoksa ya da farklıysa sonuç reddedilir. (`src/app/api/verify/route.ts`)
 
 ### Çalıştırma
 ```bash
@@ -62,8 +62,8 @@ the **same (browser-decrypt / PoP) flow** as `example-web-php`; `example-web-dot
    a signed token is returned to the partner.
 3. **Signature check** — `POST /api/verify` takes the token, fetches the enclave public key via
    `GET /api/public/enclave-key`, verifies the **RSA-PSS signature**, consumes the nonce once, and reads
-   the result **against the condition stored with the nonce**: if the signed
-   `validations.age_condition` is present (newer enclave releases) it must equal the asked condition.
+   the result **against the condition stored with the nonce**: the signed `validations.age_condition`
+   is required and must equal the asked condition; missing or different → rejected.
    (`src/app/api/verify/route.ts`)
 
 ### Running

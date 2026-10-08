@@ -100,10 +100,8 @@ function parseAsked(stored: string): AskedValidations {
  * Checks the signed validations against the validations stored with the nonce at generate.
  * Returns an error message, or null when the result matches what was asked.
  *
- * `validations.age` is the enclave's answer to the condition it was asked. Newer enclave releases
- * also sign that condition as `validations.age_condition`; when present it must equal the stored
- * condition. When absent (older enclave), the stored condition is what `age` refers to — which is
- * only safe because generate set validations on the server.
+ * `validations.age` is the enclave's answer to the condition it was asked. The enclave always signs
+ * that condition as `validations.age_condition`; it must be present and equal the stored condition.
  */
 function checkAgainstAsked(asked: AskedValidations, validations: Record<string, unknown> | undefined): string | null {
     const v = validations ?? {};
@@ -111,7 +109,8 @@ function checkAgainstAsked(asked: AskedValidations, validations: Record<string, 
         if (v.age !== undefined) return 'Yaş sorulmadığı halde yaş sonucu geldi';
         return null;
     }
-    if (v.age_condition !== undefined && v.age_condition !== asked.age) {
+    if (typeof v.age !== 'boolean') return 'Yaş sonucu eksik';
+    if (v.age_condition !== asked.age) {
         return `Sorulan yaş koşulu eşleşmiyor (beklenen ${asked.age}, gelen ${String(v.age_condition)})`;
     }
     return null;
