@@ -13,11 +13,12 @@ ise **sunucu-decrypt (callback/webhook)** varyantını gösterir.
 ### Akış
 1. **Sunucu-taraflı proxy** — Tarayıcı `POST /api/generate` çağırır; sunucu `X-API-Key`'i ekleyip
    VerifyBlind `POST /api/pop/generate`'e iletir ve bir `nonce` döner. **API anahtarı tarayıcıya hiç
-   gösterilmez.** Tarayıcıdan `public_key`, `cf_token`, `sdk_version` (ve `additional_data`) aynen
+   gösterilmez.** Tarayıcıdan `public_key`, `sdk_version` (ve `additional_data`) aynen
    alınır; **ne sorulacağına (`validations`) sunucu karar verir** — tarayıcıdaki istek değiştirilebilir,
    `"18+"` yerine `"1+"` soran biri de imzalı `age: true` alır. Bu demo ziyaretçinin seçimini yalnız bir
    izin listesinden (`18+`, `user_id`) kabul eder; gerçek bir site `validations`'ı kendi ayarından koyar.
-   Sorulan koşul nonce ile birlikte saklanır. (`src/app/api/generate/route.ts`)
+   Sorulan koşul nonce ile birlikte saklanır. Widget'ta bot koruması yoktur: gerçek bir site bu
+   ucu kendi tarafında korur (ör. oturum, hız sınırı ya da kendi bot koruması). (`src/app/api/generate/route.ts`)
 2. **Doğrulama** — Kullanıcı QR'ı VerifyBlind mobil ile okutur (`src/app/send2mobile/`); doğrulama
    bitince partner'a imzalı bir token döner.
 3. **İmza kontrolü** — `POST /api/verify` token'ı alır, `GET /api/public/enclave-key` ile enclave'in
@@ -49,11 +50,13 @@ the **same (browser-decrypt / PoP) flow** as `example-web-php`; `example-web-dot
 ### Flow
 1. **Server-side proxy** — The browser calls `POST /api/generate`; the server adds the `X-API-Key` and
    forwards it to VerifyBlind `POST /api/pop/generate`, returning a `nonce`. **The API key is never
-   exposed to the browser.** `public_key`, `cf_token`, `sdk_version` (and `additional_data`) are taken
+   exposed to the browser.** `public_key`, `sdk_version` (and `additional_data`) are taken
    from the browser unchanged; **the server decides what is asked (`validations`)** — the browser
    request can be edited, and someone who asks `"1+"` instead of `"18+"` also gets a signed `age: true`.
    This demo accepts the visitor's choice only from an allow-list (`18+`, `user_id`); a real site sets
-   `validations` from its own configuration. The asked condition is stored with the nonce.
+   `validations` from its own configuration. The asked condition is stored with the nonce. The widget
+   has no bot protection: a real site protects this endpoint on its own side (e.g. a session, a rate
+   limit or its own bot protection).
    (`src/app/api/generate/route.ts`)
 2. **Verification** — The user scans the QR with VerifyBlind mobile (`src/app/send2mobile/`); on success
    a signed token is returned to the partner.

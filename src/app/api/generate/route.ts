@@ -40,7 +40,7 @@ function pickValidations(raw: unknown): AskedValidations | null {
 
 /**
  * POST /api/verifyblind/generate (proxy)
- * Tarayıcıdan public_key / cf_token / sdk_version / additional_data alır; validations'ı SUNUCU
+ * Tarayıcıdan public_key / sdk_version / additional_data alır; validations'ı SUNUCU
  * belirler (bu demoda izin listesinden). X-API-Key ekleyerek VerifyBlind API'ye iletir.
  * Tarayıcıda credential görünmez.
  */
@@ -63,12 +63,11 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: 'Bu demoda yalnız 18+ ve user_id sorulabilir' }, { status: 400 });
         }
 
-        // Keep public_key, cf_token (dropping it silently disables bot protection), sdk_version and
-        // additional_data (the mobile SDKs call it custom_data) from the client; validations come
-        // from the server (see above).
+        // Keep public_key, sdk_version and additional_data (the mobile SDKs call it custom_data)
+        // from the client; validations come from the server (see above). The widget has no bot
+        // protection: a real site protects this endpoint itself (session, rate limit, own bot check).
         const upstreamBody = {
             public_key: body?.public_key,
-            cf_token: body?.cf_token,
             sdk_version: body?.sdk_version,
             additional_data: body?.additional_data,
             custom_data: body?.custom_data,
