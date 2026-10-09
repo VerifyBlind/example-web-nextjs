@@ -170,7 +170,8 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: mismatch }, { status: 401 });
         }
 
-        console.log(`[TestPortal Verify] ✅ İmza doğrulandı, user_id: ${data?.validations?.user_id}`);
+        // Kimlik kodları (user_id, nsbd_id, doc_id) log'a YAZILMAZ.
+        console.log('[TestPortal Verify] ✅ İmza doğrulandı');
         return NextResponse.json({ success: true, data, asked });
 
     } catch (error: any) {
