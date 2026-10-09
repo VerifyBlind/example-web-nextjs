@@ -1,182 +1,60 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as Sentry from '@sentry/nextjs';
-import crypto from 'crypto';
+import { createVerifier, type VerifyBlindErrorCode } from '@verifyblind/server';
 import store from '@/lib/redis';
+
+// @verifyblind/server needs node:crypto; the Edge runtime is not supported.
+export const runtime = 'nodejs';
 
 // Must match the prefix used in /api/generate.
 const NONCE_PREFIX = 'popnonce:';
 
-// Enclave public key kısa TTL ile cache — enclave restart edince yeni key üretiyor,
-// bu yüzden uzun cache stale verifying'e sebep oluyor.
-let cachedEnclaveKey: string | null = null;
-let cachedAt = 0;
-const KEY_CACHE_TTL_MS = 60_000; // 60 sn
+// test.verifyblind.com is a test partner and works with the demo card, so test-card results are
+// accepted here. A real site keeps the default (allowTestCards: false).
+const verifier = createVerifier({
+    apiBaseUrl: process.env.VERIFYBLIND_API_URL || 'https://api.verifyblind.com',
+    allowTestCards: true,
+});
 
-async function fetchEnclaveKey(): Promise<string> {
-    const res = await fetch('https://api.verifyblind.com/api/public/enclave-key', { cache: 'no-store' });
-    if (!res.ok) throw new Error('Enclave public key alınamadı');
-    return await res.text();
-}
-
-async function getEnclaveKey(forceRefresh = false): Promise<string> {
-    const isExpired = Date.now() - cachedAt > KEY_CACHE_TTL_MS;
-    if (!forceRefresh && cachedEnclaveKey && !isExpired) return cachedEnclaveKey;
-    cachedEnclaveKey = await fetchEnclaveKey();
-    cachedAt = Date.now();
-    return cachedEnclaveKey;
-}
-
-function verifyWithKey(payload: string, signature: string, enclaveKey: string): boolean {
-    // Enclave public key base64 SPKI → PEM
-    const pemKey = `-----BEGIN PUBLIC KEY-----\n${enclaveKey.match(/.{1,64}/g)?.join('\n')}\n-----END PUBLIC KEY-----`;
-    return crypto.verify(
-        'sha256',
-        Buffer.from(payload),
-        {
-            key: pemKey,
-            padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
-            saltLength: 32
-        },
-        Buffer.from(signature, 'base64')
-    );
-}
-
-// ── Enclave doğrulama (opsiyonel, Partner_Integration_Guide_TR.md Bölüm 7) ──────────────
-// SDK, doğrulama sonucuyla birlikte `attestation.pcr0_signature` ve `attestation.attestation_document`
-// verir (onSuccess verisinde). Aşağıdaki kontrol, konuştuğunuz enclave'in halka açık kaynaktan
-// yeniden üretilebilir şekilde derlenmiş sürüm olduğunu VerifyBlind'a güvenmeden teyit eder.
-//
-// Bu örnek portal akışı bloke ETMEZ — istemci şu an rotaya yalnız payload+signature gönderiyor.
-// Kendi entegrasyonunuzda kanıtı da backend'e taşıyıp bu kontrolü ZORUNLU yapabilirsiniz.
-
-let cachedDeveloperKey: string | null = null;
-let developerKeyCachedAt = 0;
-
-async function getDeveloperKey(): Promise<string> {
-    // Rotasyona kadar sabit; yine de bir saatlik tazeleme bırakıyoruz.
-    if (cachedDeveloperKey && Date.now() - developerKeyCachedAt < 3_600_000) return cachedDeveloperKey;
-    const res = await fetch('https://api.verifyblind.com/api/public/developer-key', { cache: 'no-store' });
-    if (!res.ok) throw new Error('Geliştirici public key alınamadı');
-    const json = await res.json();
-    cachedDeveloperKey = json.public_key as string;
-    developerKeyCachedAt = Date.now();
-    return cachedDeveloperKey;
-}
-
-/**
- * PCR0 yetkilendirme imzasını doğrular.
- *
- * DİKKAT: padding burada PKCS#1 v1.5'tir — enclave'in SONUÇ imzası ise PSS
- * (bkz. verifyWithKey). Karıştırmak sessizce false döndürür.
- *
- * İkinci adım: pcr0Hex'i Enclave repo'sunun son release'indeki expected_pcr.json ile
- * karşılaştırın (https://github.com/VerifyBlind/VerifyBlind-Enclave/releases/latest).
- */
-export async function verifyPcr0Signature(pcr0Hex: string, pcr0SignatureB64: string): Promise<boolean> {
-    try {
-        return crypto.verify(
-            'sha256',
-            Buffer.from(pcr0Hex, 'utf8'),
-            { key: await getDeveloperKey(), padding: crypto.constants.RSA_PKCS1_PADDING },
-            Buffer.from(pcr0SignatureB64, 'base64')
-        );
-    } catch {
-        return false;
-    }
-}
-
-type AskedValidations = { age?: string; user_id?: true };
-
-function parseAsked(stored: string): AskedValidations {
-    try {
-        const v = JSON.parse(stored);
-        return v && typeof v === 'object' ? v : {};
-    } catch {
-        return {};
-    }
-}
-
-/**
- * Checks the signed validations against the validations stored with the nonce at generate.
- * Returns an error message, or null when the result matches what was asked.
- *
- * `validations.age` is the enclave's answer to the condition it was asked. The enclave always signs
- * that condition as `validations.age_condition`; it must be present and equal the stored condition.
- */
-function checkAgainstAsked(asked: AskedValidations, validations: Record<string, unknown> | undefined): string | null {
-    const v = validations ?? {};
-    if (asked.age === undefined) {
-        if (v.age !== undefined) return 'Yaş sorulmadığı halde yaş sonucu geldi';
-        return null;
-    }
-    if (typeof v.age !== 'boolean') return 'Yaş sonucu eksik';
-    if (v.age_condition !== asked.age) {
-        return `Sorulan yaş koşulu eşleşmiyor (beklenen ${asked.age}, gelen ${String(v.age_condition)})`;
-    }
-    return null;
-}
+const ERRORS: Partial<Record<VerifyBlindErrorCode, { status: number; message: string }>> = {
+    BAD_TOKEN: { status: 400, message: 'Geçersiz token' },
+    BAD_SIGNATURE: { status: 401, message: 'Geçersiz imza' },
+    KEY_FETCH_FAILED: { status: 503, message: 'Enclave public key alınamadı' },
+    BAD_PAYLOAD: { status: 400, message: 'Geçersiz oturum (nonce yok)' },
+    NONCE_NOT_FOUND: { status: 401, message: 'Oturum süresi dolmuş veya zaten kullanılmış' },
+    ASKED_MISMATCH: { status: 401, message: 'Sonuç sorulan doğrulamalarla eşleşmiyor' },
+    TEST_CARD: { status: 403, message: 'Demo kart sonucu kabul edilmiyor' },
+};
 
 /**
  * POST /api/verify
- * token (base64) parse eder → Enclave imzasını RSA-PSS SHA-256 ile doğrular.
- * İlk denemede başarısız olursa enclave public key'i tazeleyip tekrar dener
- * (enclave restart sonrası stale cache durumu için).
- * Geçerliyse { success: true, data: parsedPayload } döner.
+ * @verifyblind/server checks the enclave signature (RSA-PSS SHA-256), consumes the nonce exactly once
+ * and reads the result against the validations /api/generate stored with that nonce (never against
+ * what the browser says it asked).
+ * Returns { success: true, data: signedPayload, asked } or { error }.
  */
 export async function POST(req: NextRequest) {
     try {
         const { token } = await req.json();
-        if (!token) {
+        if (typeof token !== 'string' || !token) {
             return NextResponse.json({ error: 'token gerekli' }, { status: 400 });
         }
 
-        const { payload, signature } = JSON.parse(
-            Buffer.from(token, 'base64').toString()
-        );
-
-        let enclaveKey = await getEnclaveKey();
-        let isValid = verifyWithKey(payload, signature, enclaveKey);
-
-        // Stale cache koruması — bir kez force refresh ile yeniden dene.
-        if (!isValid) {
-            console.warn('[TestPortal Verify] İmza ilk denemede başarısız — enclave key tazeleniyor.');
-            enclaveKey = await getEnclaveKey(true);
-            isValid = verifyWithKey(payload, signature, enclaveKey);
-        }
-
-        if (!isValid) {
-            return NextResponse.json({ error: 'Geçersiz imza' }, { status: 401 });
-        }
-
-        const data = JSON.parse(payload);
-
-        // Replay protection: bind the signed nonce to a session this portal generated
-        // and consume it exactly once.
-        const sessionNonce = data?.nonce;
-        if (typeof sessionNonce !== 'string' || !sessionNonce) {
-            return NextResponse.json({ error: 'Geçersiz oturum (nonce yok)' }, { status: 400 });
-        }
-        const consumed = await store.getdel(`${NONCE_PREFIX}${sessionNonce}`);
-        if (!consumed) {
-            return NextResponse.json({ error: 'Oturum süresi dolmuş veya zaten kullanılmış' }, { status: 401 });
-        }
-
-        // Read the result against what WE asked at generate (stored with the nonce), never against
-        // what the browser says it asked.
-        const asked = parseAsked(consumed);
-        const mismatch = checkAgainstAsked(asked, data?.validations);
-        if (mismatch) {
-            console.warn(`[TestPortal Verify] ❌ ${mismatch}`);
-            return NextResponse.json({ error: mismatch }, { status: 401 });
+        const r = await verifier.verifyAndConsume(token, (nonce) => store.getdel(`${NONCE_PREFIX}${nonce}`));
+        if (!r.ok) {
+            const e = ERRORS[r.error.code] ?? { status: 401, message: 'Doğrulama başarısız' };
+            // Only the error code: the library keeps identity codes out of it.
+            console.warn(`[TestPortal Verify] ❌ ${r.error.code}`);
+            return NextResponse.json({ error: e.message, code: r.error.code }, { status: e.status });
         }
 
         // Kimlik kodları (user_id, nsbd_id, doc_id) log'a YAZILMAZ.
         console.log('[TestPortal Verify] ✅ İmza doğrulandı');
-        return NextResponse.json({ success: true, data, asked });
+        return NextResponse.json({ success: true, data: r.payload, asked: r.asked });
 
     } catch (error: any) {
         Sentry.captureException(error);
-        console.error('[TestPortal Verify] Hata:', error);
-        return NextResponse.json({ error: error.message }, { status: 500 });
+        console.error('[TestPortal Verify] Hata:', error?.message);
+        return NextResponse.json({ error: error?.message || 'Sunucu hatası' }, { status: 500 });
     }
 }
